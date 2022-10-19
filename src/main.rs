@@ -150,7 +150,22 @@ enum Commands {
         cache_dir: String,
         #[clap(short, long)]
         length_threshold: u64,
-    }
+    },
+
+    MemorizationSample {
+        #[clap(short, long)]
+        data_file: String,
+        #[clap(short, long)]
+        length_threshold: usize,
+        #[clap(short, long, default_value_t = 0)]
+        frequency_threshold: usize,
+        #[clap(short, long)]
+        only_save_one: bool,
+        #[clap(short, long)]
+        cache_dir: String,
+        #[clap(short, long, default_value_t = 8)]
+        num_threads: i64,
+    },
     
 }
 
@@ -490,6 +505,19 @@ fn cmd_count_occurrences_multi(fpath: &String, querypath: &String)   -> std::io:
     Ok(())
 }
 
+fn cmd_memorization_sample(
+    data_file: &String, 
+    length_threshold: &usize, 
+    frequency_threshold: &usize,
+    only_save_one: &bool, 
+    cache_dir: &String, 
+    num_threads: i64)  -> std::io::Result<()> {
+        println!("Hello, world! {} {} {}", data_file, length_threshold, frequency_threshold, );
+        // cmd_make(data_file);
+        cmd_self_similar(data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, num_threads);
+        cmd_collect(data_file, cache_dir, (*length_threshold).try_into().unwrap());
+        Ok(())
+    }
 
 /* 
  * Given a string S and suffix array A, compute statistics about how many
@@ -597,13 +625,20 @@ fn cmd_self_similar(data_file: &String, length_threshold: &usize, frequency_thre
                 }
             }
 
-            if pairs.len() > frequency_threshold {
+            if pairs.len() == frequency_threshold {
                 if only_save_one {
                     let seq = &text[pairs[0] as usize..pairs[0] as usize+length_threshold];
                     if pairs[0]%2 == 0 {
                         outfile.write_all(seq).expect("Ok");
+                        // .to_le_bytes()
+                        println!("seq {:?} len {}", seq, pairs.len());
+                        outfile_sizes.write_all(&[pairs.len() as u8]).expect("Ok")
+
                     }
                 } else {
+                    // outfile.write_all(&pairs[..], ratio).expect("Ok")
+                    // outfile_sizes.write_all(&[pairs.len() as u64][..], ratio).expect("Ok");
+
                     outfile.write_all(&to_bytes(&pairs[..], ratio)[..]).expect("Ok");
                     outfile_sizes.write_all(&to_bytes(&[pairs.len() as u64][..], ratio)[..]).expect("Ok");
                     duplicate_count += pairs.len();
@@ -897,7 +932,7 @@ fn cmd_merge(data_files: &Vec<String>, output_file: &String, num_threads: i64)  
     // This value is declared here, but also in scripts/make_suffix_array.py
     // If you want to change it, it needs to be changed in both places.
     const HACKSIZE:usize=100000;
-    
+    println!("starting cmd_merge ");
     let nn:usize = data_files.len();
 
     fn load_text2<'s,'t>(fpath:String) -> Vec<u8> {
@@ -910,16 +945,20 @@ fn cmd_merge(data_files: &Vec<String>, output_file: &String, num_threads: i64)  
     }
 
     // Start out by loading the data files and suffix arrays.
+    println!("Loading text: ");
     let texts:Vec<Vec<u8>> = (0..nn).map(|x| load_text2(data_files[x].clone())).collect();
 
+    println!("Loading textlen: ");
     let texts_len:Vec<usize> = texts.iter().enumerate().map(|(i,x)| x.len() - (if i+1 == texts.len() {0} else {HACKSIZE})).collect();
-
+    
+    println!("Loading metadata: ");
     let metadatas:Vec<u64> = (0..nn).map(|x| {
         let meta = fs::metadata(format!("{}.table.bin", data_files[x].clone())).unwrap();
         assert!(meta.len()%(texts[x].len() as u64) == 0);
         return meta.len();
     }).collect();
 
+    println!("Loading big_ratio: ");
     let big_ratio = ((texts_len.iter().sum::<usize>() as f64).log2()/8.0).ceil() as usize;
     println!("Ratio: {}", big_ratio);
 
@@ -1019,7 +1058,7 @@ fn cmd_merge(data_files: &Vec<String>, output_file: &String, num_threads: i64)  
 
     // Make sure we have enough space to take strided offsets for multiple threads
     // This should be an over-approximation, and starts allowing new threads at 1k of data
-    let num_threads = std::cmp::min(num_threads, std::cmp::max((texts.len() as i64 - 1024)/10, 1));
+    // let num_threads = std::cmp::min(num_threads, std::cmp::max((texts.len() as i64 - 1024)/10, 1));
     println!("AA {}", num_threads);
 
     // Start a bunch of jobs that each work on non-overlapping regions of the final resulting suffix array
@@ -1234,6 +1273,10 @@ fn main()  -> std::io::Result<()> {
 
         Commands::SelfSimilar { data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, num_threads } => {
             cmd_self_similar(data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, *num_threads)?;
+        }
+
+        Commands::MemorizationSample { data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, num_threads } => {
+            cmd_memorization_sample(data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, *num_threads)?;
         }
 
         Commands::AcrossSimilar { data_file_1, data_file_2, cache_dir, length_threshold, num_threads } => {
