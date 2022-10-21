@@ -138,6 +138,7 @@ def main(train_files_path, args):
     print(f'rust_result for memorization_sample {rust_result}')
 
     save_mem_sample_json(f'{args.cache_dir}/mem_sample_ranges_train.txt', modified_train_file)
+    s3_accessor.upload(f"{args.result_dir.strip('/')}/{unique_id}/{args.batch_array_index}-mem_sample.csv", "mem_sample.csv")
 
 
 def copy_s3_to_local(files, dir):
@@ -179,7 +180,7 @@ if __name__ == "__main__":
     os.makedirs(train_files_local_dir, exist_ok=True)
 
     # copy files from s3 to local
-    print(f'going to get {len(train_files)} files from s3, {train_files[:3]}')
+    print(f'going to get {len(train_files)} files from s3')
     copy_s3_to_local(train_files, train_files_local_dir)
 
     # run the main function
