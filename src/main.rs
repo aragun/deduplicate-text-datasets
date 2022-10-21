@@ -514,7 +514,11 @@ fn cmd_memorization_sample(
     num_threads: i64)  -> std::io::Result<()> {
         println!("Hello, world! {} {} {}", data_file, length_threshold, frequency_threshold, );
         // cmd_make(data_file);
-        cmd_self_similar(data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, num_threads);
+        let result = cmd_self_similar(data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, num_threads);
+        let result_similar = match result {
+            Ok(file) => file,
+            Err(error) => panic!("Problem with cmd_self_similar: {:?}", error),
+        }; 
         cmd_collect(data_file, cache_dir, (*length_threshold).try_into().unwrap());
         Ok(())
     }
@@ -1244,6 +1248,12 @@ fn cmd_collect(data_file: &String, cache_dir: &String, length_threshold: u64)  -
     
     let strout:Vec<String> = ranges.iter().map(|&x| format!("{} {}", x.0, x.1)).collect();
     println!("out\n{}", strout.join("\n"));
+
+    // write strout to disk
+    let outfile = format!("{}/mem_sample_ranges_{}", cache_dir, data_file.split("/").last().unwrap());
+    println!("saving ranges to {}", outfile);
+    fs::write(outfile, strout.join("\n")).expect("");
+
     Ok(())
 }
 

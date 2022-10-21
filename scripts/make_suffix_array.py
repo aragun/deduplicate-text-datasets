@@ -22,6 +22,8 @@ data_size = os.path.getsize(sys.argv[1])
 
 HACK = 100000
 
+import timeit
+start = timeit.default_timer()
 
 started = []
 
@@ -85,6 +87,7 @@ torun = " --suffix-path ".join(files)
 print("./target/debug/dedup_dataset merge --output-file %s --suffix-path %s --num-threads %d"%("tmp/out.table.bin", torun, mp.cpu_count()))
 pipe = os.popen("./target/debug/dedup_dataset merge --output-file %s --suffix-path %s --num-threads %d"%("tmp/out.table.bin", torun, mp.cpu_count()))
 output = pipe.read()
+print(output)
 if pipe.close() is not None:
     print("Something went wrong with merging.")
     print("Please check that you ran with ulimit -Sn 100000")
@@ -102,3 +105,6 @@ if os.path.exists(sys.argv[1]+".table.bin"):
 else:
     print("Failed to create table")
     exit(1)
+
+end = timeit.default_timer()
+print(f'total time {end - start}')
