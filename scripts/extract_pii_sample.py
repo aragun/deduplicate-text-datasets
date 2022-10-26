@@ -80,38 +80,34 @@ def extract_pii_lines_from_jsonl_files(files, output_file, include_newline=True)
                             # look up regex here 
                             # print(f'{line_count} reading {json_line.keys()}')
                             total_lines += 1
-                            all_matches = re.findall(regex, json_line[content_column])
+
                             # filter empty results
-                            if all_matches:
-                                # get all matches
+                            if re.search(regex, json_line[content_column]):
                                 allm = []
-                                for m in all_matches:
-                                    tmp = list(filter(None, m))
-                                    if len(tmp) > 0:
-                                        allm.append(tmp)
+                                for match in re.finditer(regex, json_line[content_column]):
+                                    allm.append(match.group(0))
                                 
                                 if len(allm) > 0:
                                     # print(f'found match {json_line[content_column]}')
-                                    print(f'all matches {allm}')
+                                    # print(f'{line_count} all matches {allm}')
                                     line_count += len(allm)
                                     # matches[line_count] = match[0]
                                     # write_line(json_line[content_column], of)
                                     
                                     sample['id'] = line_count
                                     sample[content_column] = json_line[content_column]
-                                    sample['match'] = allm
+                                    sample['matches'] = allm
 
                                     matches.append(sample)
-
-                                    if line_count > 1000:
-                                        break
     
-    print(f'{len(matches), line_count} lines of potential PII extracted from {total_lines} lines ...')
-    for m in matches:
-        print(f"id {m['id']}, match {m['match']}, len(doc) {len(m[content_column])}")
+    print(f'{len(matches)} lines of potential PII extracted from {total_lines} lines ...')
+    # for m in matches:
+    #     print(f"id {m['id']}, match {m['matches']}, len(doc) {len(m[content_column])}")
 
-    with open('data.json', 'w') as f:
+    with open('pii_sample.json', 'w') as f:
         json.dump(matches, f)
+
+    s3_accessor.upload(f"{args.result_dir.strip('/')}/{unique_id}/{args.batch_array_index}-pii_sample.json", "pii_sample.json")
 
 def recreate_dir(dir):
     if os.path.exists(dir):
@@ -129,19 +125,6 @@ def main(train_files_path, args):
     modified_train_file = os.path.join(temp_folder, 'train.txt')
     extract_pii_lines_from_jsonl_files(train_files, modified_train_file, include_newline=False)
 
-    # print(f'looking at combined {modified_train_file} ...')
-    # #first make the suffix array
-    # cmd = ['python3', './scripts/make_suffix_array.py', modified_train_file]
-    # rust_result = subprocess.Popen(cmd).wait()
-    # print(rust_result)
-
-    # rust_result = os.popen(f"cargo run memorization-sample --data-file {modified_train_file} --length-threshold {args.length_threshold} --cache-dir {args.cache_dir} --num-threads {os.cpu_count() or 1} --frequency-threshold {args.frequency_threshold}").read()
-    # print(f'rust_result for memorization_sample {rust_result}')
-
-    # save_mem_sample_json(f'{args.cache_dir}/mem_sample_ranges_train.txt', modified_train_file)
-    # s3_accessor.upload(f"{args.result_dir.strip('/')}/{unique_id}/{args.batch_array_index}-mem_sample.csv", "mem_sample.csv")
-
-
 def copy_s3_to_local(files, dir):
     print(f'downloading {len(files)} files to {dir} ...')
     for file in files:
@@ -152,12 +135,19 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--train_files', type=str, required=True, help='S3 path to train files. (Provide dir or file)')
     parser.add_argument('--data_dir', type=str, default='./data', help='Local data directory')
-    parser.add_argument('--result_dir', type=str, default="s3://anuragik-dev/batch-jobs/", help='result directory remote path')
+    parser.add_argument('--result_dir', type=str, default="s3://anuragik-dev/pii_samples/", help='result directory remote path')
     parser.add_argument('--batch_array_size', type=int, default=400, help='AWS Batch array size')
     parser.add_argument('--batch_array_index', type=int, default=0, help='AWS Batch array index for a job')
     parser.add_argument('--cache_dir', type=str, default="/tmp/cache", help='cache directory for saving dups and sizes files output by cmd_self_similar')
+    parser.add_argument('--test_file', type=str, help='local test file, skips fetching files from AWS')
 
     args = parser.parse_args()
+
+    if args.test_file:
+        print(f'looking at {args.test_file}')
+        extract_pii_lines_from_jsonl_files([args.test_file], 'train.txt', include_newline=False)
+        exit()
+
     train_files_remote_path = args.train_files
     train_files_local_dir = os.path.join(data_dir, 'train')
 

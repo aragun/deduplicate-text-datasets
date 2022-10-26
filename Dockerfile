@@ -11,11 +11,11 @@ ADD scripts /opt/source_code/scripts
 ADD src /opt/source_code/src
 ADD Cargo.toml /opt/source_code/Cargo.toml
 ADD tmp/.keep /opt/source_code/tmp/.keep
-ADD entrypoint.sh /opt/source_code/entrypoint.sh
+ADD entrypoint_pii.sh /opt/source_code/entrypoint_pii.sh
 
 WORKDIR /opt/source_code
 
 RUN cargo build
-RUN chmod 777 entrypoint.sh
+RUN chmod 777 entrypoint_pii.sh
 
-ENTRYPOINT ["/opt/source_code/entrypoint.sh"]
+ENTRYPOINT ["/opt/source_code/entrypoint_pii.sh"]
