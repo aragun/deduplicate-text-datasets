@@ -166,6 +166,23 @@ enum Commands {
         #[clap(short, long, default_value_t = 8)]
         num_threads: i64,
     },
+
+    MemorizationSampleAcross {
+        #[clap(long)]
+        data_file_1: String,
+        #[clap(long)]
+        data_file_2: String,
+        #[clap(short, long)]
+        length_threshold: usize,
+        #[clap(short, long, default_value_t = 0)]
+        frequency_threshold: usize,
+        #[clap(short, long)]
+        only_save_one: bool,
+        #[clap(short, long)]
+        cache_dir: String,
+        #[clap(short, long, default_value_t = 8)]
+        num_threads: i64,
+    },
     
 }
 
@@ -522,6 +539,26 @@ fn cmd_memorization_sample(
         cmd_collect(data_file, cache_dir, (*length_threshold).try_into().unwrap());
         Ok(())
     }
+
+fn cmd_memorization_sample_across(
+        data_file_1: &String, 
+        data_file_2: &String, 
+        length_threshold: &usize, 
+        frequency_threshold: &usize,
+        only_save_one: &bool, 
+        cache_dir: &String, 
+        num_threads: i64)  -> std::io::Result<()> {
+            println!("cmd_memorization_sample_across {} {} {}", data_file_1, data_file_2, frequency_threshold);
+            // cmd_make(data_file);
+            // let result = cmd_self_similar(data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, num_threads);
+            let result = cmd_across_similar(data_file_1, data_file_2, cache_dir, *length_threshold, num_threads);
+            let result_similar = match result {
+                Ok(file) => file,
+                Err(error) => panic!("Problem with cmd_self_similar: {:?}", error),
+            }; 
+            cmd_collect(data_file_2, cache_dir, (*length_threshold).try_into().unwrap());
+            Ok(())
+        }
 
 /* 
  * Given a string S and suffix array A, compute statistics about how many
@@ -1287,6 +1324,10 @@ fn main()  -> std::io::Result<()> {
 
         Commands::MemorizationSample { data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, num_threads } => {
             cmd_memorization_sample(data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, *num_threads)?;
+        }
+
+        Commands::MemorizationSampleAcross { data_file_1, data_file_2, length_threshold, frequency_threshold, only_save_one, cache_dir, num_threads } => {
+            cmd_memorization_sample_across(data_file_1, data_file_2, length_threshold, frequency_threshold, only_save_one, cache_dir, *num_threads)?;
         }
 
         Commands::AcrossSimilar { data_file_1, data_file_2, cache_dir, length_threshold, num_threads } => {
