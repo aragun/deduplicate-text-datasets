@@ -132,6 +132,8 @@ enum Commands {
         cache_dir: String,
         #[clap(short, long, default_value_t = 8)]
         num_threads: i64,
+        #[clap(short, long, default_value_t = 0)]
+        frequency_threshold: usize,
     },
 
     Merge {
@@ -549,14 +551,12 @@ fn cmd_memorization_sample_across(
         cache_dir: &String, 
         num_threads: i64)  -> std::io::Result<()> {
             println!("cmd_memorization_sample_across {} {} {}", data_file_1, data_file_2, frequency_threshold);
-            // cmd_make(data_file);
-            // let result = cmd_self_similar(data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, num_threads);
-            let result = cmd_across_similar(data_file_1, data_file_2, cache_dir, *length_threshold, num_threads);
+            let result = cmd_across_similar(data_file_1, data_file_2, cache_dir, *length_threshold, num_threads, *frequency_threshold);
             let result_similar = match result {
                 Ok(file) => file,
                 Err(error) => panic!("Problem with cmd_self_similar: {:?}", error),
             }; 
-            cmd_collect(data_file_2, cache_dir, (*length_threshold).try_into().unwrap());
+            cmd_collect(data_file_1, cache_dir, (*length_threshold).try_into().unwrap());
             Ok(())
         }
 
@@ -745,7 +745,7 @@ fn cmd_self_similar(data_file: &String, length_threshold: &usize, frequency_thre
  * two, one for the A -> B comparison, and another for the B -> A comparison.
  */
 fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &String,
-                      length_threshold: usize, num_threads: i64)  -> std::io::Result<()> {
+                      length_threshold: usize, num_threads: i64, frequency_threshold: usize)  -> std::io::Result<()> {
     let text1 = filebuffer::FileBuffer::open(data_file_1).unwrap();
     let text2 = filebuffer::FileBuffer::open(data_file_2).unwrap();
 
@@ -767,7 +767,8 @@ fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &St
               start2:usize, end2:usize,
               data_file_1: String, data_file_2: String, 
               cache_dir: String, length_threshold: usize,
-              size_width_1: usize, size_width_2: usize) -> usize {
+              size_width_1: usize, size_width_2: usize,
+              frequency_threshold: usize) -> usize {
         let mut table1 = make_table(format!("{}.table.bin", data_file_1), start1, size_width_1);
         let mut location1 = get_next_pointer_from_table(&mut table1);
 
@@ -805,6 +806,7 @@ fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &St
         let mut duplicate_count = 0;
         let mut i = start1;
         let mut j = start2;
+
         while i < end1 && j < end2 {
             if (i+j)%1000000000 == 0 { println!("{} / {} ", i, text1.len()); }
             
@@ -817,16 +819,20 @@ fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &St
             // (b) the match is of length at least length_threshold
             
             let does_match = suf1.len() >= length_threshold && suf2.len() >= length_threshold && suf1[..length_threshold] == suf2[..length_threshold];
-
+            
             if does_match {
+                let mut pairs:Vec<u64> = Vec::new();
+
                 // We have a match between a subsequence in text1 and text2
                 let target_suf = &suf1[..length_threshold]; // wlog. equals suf2[..length_threshold]
 
                 // We want the matches to be clustered, so let's find all matches from
                 // the first string that are equal to target_suf
                 let start = i;
+                
                 while suf1.len() >= length_threshold && &suf1[..length_threshold] == target_suf {
-                    outfile1.write_all(&to_bytes(&[location1 as u64][..], size_width_1)[..]).expect("Ok");
+                    // outfile1.write_all(&to_bytes(&[location1 as u64][..], size_width_1)[..]).expect("Ok");
+                    pairs.push(location1);
 
                     location1 = get_next_pointer_from_table_canfail(&mut table1);
                     i += 1;
@@ -835,8 +841,17 @@ fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &St
                     }
                     suf1 = &text1[location1 as usize..];
                 }
-                duplicate_count += i-start;
-                outfile1_sizes.write_all(&to_bytes(&[(i-start) as u64][..], size_width_1)[..]).expect("Ok");
+
+                if pairs.len() == frequency_threshold {
+                    println!("Found one sample for frequency {}!", frequency_threshold);
+                    outfile1.write_all(&to_bytes(&pairs[..], size_width_1)[..]).expect("Ok");
+                    outfile1_sizes.write_all(&to_bytes(&[pairs.len() as u64][..], size_width_1)[..]).expect("Ok");
+                    duplicate_count += pairs.len();
+                }
+                pairs.clear();
+
+                // duplicate_count += i-start;
+                // outfile1_sizes.write_all(&to_bytes(&[(i-start) as u64][..], size_width_1)[..]).expect("Ok");
 
                 // And now find all matches from the second string that are equal to target_suf
                 let start = j;
@@ -904,7 +919,7 @@ fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &St
                               data_file_1.clone(), data_file_2.clone(),
                               cache_dir.clone(),
                               length_threshold,
-                              ratio1 as usize, ratio2 as usize);
+                              ratio1 as usize, ratio2 as usize, frequency_threshold);
             });
             result.push(one_result);
         }
@@ -1330,12 +1345,13 @@ fn main()  -> std::io::Result<()> {
             cmd_memorization_sample_across(data_file_1, data_file_2, length_threshold, frequency_threshold, only_save_one, cache_dir, *num_threads)?;
         }
 
-        Commands::AcrossSimilar { data_file_1, data_file_2, cache_dir, length_threshold, num_threads } => {
+        Commands::AcrossSimilar { data_file_1, data_file_2, cache_dir, length_threshold, num_threads, frequency_threshold } => {
             cmd_across_similar(data_file_1,
                                data_file_2,
                                cache_dir,
                                *length_threshold,
-                               *num_threads)?;
+                               *num_threads,
+                               *frequency_threshold)?;
         }
 
         Commands::Merge { suffix_path, output_file, num_threads } => {

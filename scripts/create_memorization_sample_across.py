@@ -78,7 +78,8 @@ def recreate_dir(dir):
         shutil.rmtree(dir)
     os.makedirs(dir, exist_ok=True)
 
-def save_mem_sample_json(byterange, filename):
+def save_mem_sample_json(byterange, filename, output_fname):
+    print(f'reading byterange {byterange} for file {filename}')
     if not os.path.isfile(byterange):
         print(f'{byterange} does not exist, cannot create a sample!')
         return
@@ -88,9 +89,9 @@ def save_mem_sample_json(byterange, filename):
 
     def get_range(l, r):
         try:
-            ans = data[l:r].decode()
+            ans = data[l:r].decode('iso-8859-1')
         except UnicodeDecodeError as ex:
-            # print(f"{ex}")
+            print(f"{ex}, data {data[l:r]}")
             return None
         return ans
 
@@ -102,14 +103,15 @@ def save_mem_sample_json(byterange, filename):
             l, r = int(line[0]), int(line[1])
             # bytes [l, l+length_threshold] are duplicated 
             sample = get_range(l, r)
+            print(f'sample {sample}')   
             if sample is not None:
                 samples[sample] += 1
             
     
-    print(f'total samples {len(list(samples))}, writing to mem_sample.csv')
+    print(f'total samples {len(list(samples))}, writing to {output_fname}')
     keys = random.sample(list(samples), min(len(list(samples)), 200))
 
-    with open('mem_sample.csv', 'w', newline='') as csvfile:
+    with open(output_fname, 'w', newline='') as csvfile:
         fieldnames = ['frequency', 'sample']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
@@ -149,30 +151,40 @@ def main(train_files_path, val_files_path, args):
     print(f'suffix array built in {time.time() - start} seconds')
     # TODO: also output size of the suffix array
 
-    rust_result = os.popen(f"cargo run memorization-sample-across --data-file-1 {modified_train_file} --data-file-2 {modified_val_file} --length-threshold {args.length_threshold} --cache-dir {args.cache_dir} --num-threads {os.cpu_count() or 1} --frequency-threshold {args.frequency_threshold}").read()
-    print(f'rust_result for memorization_sample {rust_result}')
+    for f in range(1, args.frequency_threshold+1):
+        recreate_dir(args.cache_dir)
+        rust_result = os.popen(f"cargo run memorization-sample-across --data-file-1 {modified_train_file} --data-file-2 {modified_val_file} --length-threshold {args.length_threshold} --cache-dir {args.cache_dir} --num-threads {os.cpu_count() or 1} --frequency-threshold {f}").read()
+        print(f'rust_result for memorization_sample {rust_result}')
 
-    save_mem_sample_json(f'{args.cache_dir}/mem_sample_ranges_val.txt', modified_val_file)
-    # s3_accessor.upload(f"{args.result_dir.strip('/')}/{unique_id}/{args.batch_array_index}-mem_sample.csv", "mem_sample.csv")
+        save_mem_sample_json(f'{args.cache_dir}/mem_sample_ranges_train.txt', modified_train_file, f'mem_sample_f_{f}.csv')
+        if os.path.isfile(f'mem_sample_f_{f}.csv'):
+            if args.is_test:
+                unique_id = 'test_output'
+            else:
+                unique_id = os.environ.get('AWS_BATCH_JOB_ID', str(uuid.uuid4())).split(':')[0]
+            s3_accessor.upload(f"{args.result_dir.strip('/')}/{unique_id}/{args.batch_array_index}-mem_sample_f_{f}.csv", f'mem_sample_f_{f}.csv')
 
 
 def copy_s3_to_local(files, dir):
     print(f'downloading {len(files)} files to {dir} ...')
     for file in files:
         s3_accessor.download_to_local(file, dir)
-    
+    print(f'{len(os.listdir(dir))} files downloaded at {dir}')
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--train_files', type=str, required=True, help='S3 path to train files. (Provide dir or file)')
     parser.add_argument('--val_files', type=str, required=True, help='S3 path to val files. (Provide dir or file)')
     parser.add_argument('--data_dir', type=str, default='./data', help='Local data directory')
-    parser.add_argument('--result_dir', type=str, default="s3://anuragik-dev/batch-jobs/", help='result directory remote path')
-    parser.add_argument('--batch_array_size', type=int, default=100, help='AWS Batch array size')
+    parser.add_argument('--result_dir', type=str, default="s3://anuragik-dev/batch-jobs/across_similar", help='result directory remote path')
+    parser.add_argument('--batch_array_size', type=int, default=400, help='AWS Batch array size')
     parser.add_argument('--batch_array_index', type=int, default=0, help='AWS Batch array index for a job')
     parser.add_argument('--length_threshold', type=int, default=200, help='Minimum length threshold in bytes for sampling')
     parser.add_argument('--cache_dir', type=str, default="/tmp/cache", help='cache directory for saving dups and sizes files output by cmd_self_similar')
-    parser.add_argument('--frequency_threshold', type=int, default=5, help='Maximum frequency threshold for sampling')    
+    parser.add_argument('--frequency_threshold', type=int, default=5, help='Maximum frequency threshold for sampling') 
+    parser.add_argument('--is_test', action='store_true', help='True if running test, does a few test specific settings, like fetching all train and val jsons')  
+    parser.add_argument('--val_range_start', type=int, default=0, help='start of range of val files to use')
+    parser.add_argument('--val_range_end', type=int, default=100, help='end of range of val files to use')
 
     args = parser.parse_args()
     train_files_remote_path = args.train_files
@@ -187,22 +199,25 @@ if __name__ == "__main__":
     val_bucket, val_key = s3_accessor.getBucketNameAndPrefix(val_files_remote_path)
     val_files =[f"s3://{val_bucket}/{key}" for key in s3_accessor.getNextKey(bucket=val_bucket, prefixes=[val_key], suffixes=['.jsonl','.json'])]
     
+    # TODO: hack to fit val file suffix array creation on one machine, take a fixed number of them h
+    val_files = val_files[args.val_range_start:args.val_range_end]
+
     key_index = 0
     for key in s3_accessor.getNextKey(bucket=train_bucket, prefixes=[train_key], suffixes=['.jsonl','.json']):
-        if key_index % args.batch_array_size == args.batch_array_index:
+        if args.is_test or key_index % args.batch_array_size == args.batch_array_index:
             train_files.append(f"s3://{train_bucket}/{key}")
         key_index+=1
     
    
     # make temp folder
-    print(f'recreating {temp_folder, args.cache_dir, train_files_local_dir, val_files_local_dir}')
-    for d in [temp_folder, args.cache_dir, train_files_local_dir, val_files_local_dir]:
+    print(f'recreating {temp_folder, args.cache_dir, data_dir, train_files_local_dir, val_files_local_dir}')
+    for d in [temp_folder, args.cache_dir,  data_dir, train_files_local_dir, val_files_local_dir]:
         recreate_dir(d)
 
     # copy files from s3 to local
     print(f'going to get {len(train_files)} train files, {len(val_files)} val files from s3')
     copy_s3_to_local(train_files, train_files_local_dir)
-    # copy_s3_to_local(val_files, val_files_local_dir)
+    copy_s3_to_local(val_files, val_files_local_dir)
 
     # run the main function
-    main(train_files_local_dir, '/home/anuragik/data/pile-c4-hq', args)
+    main(train_files_local_dir, val_files_local_dir, args)
