@@ -106,6 +106,26 @@ enum Commands {
         query_file: String,
     },
 
+    ExactLookup {
+        #[clap(short, long)]
+        data_file: String,
+        #[clap(short, long)]
+        query_file: String,
+        #[clap(short, long, default_value_t = 8)]
+        num_threads: usize,
+    },
+
+    Contains {
+        #[clap(short, long)]
+        data_file: String,
+        #[clap(short, long)]
+        query_file: String,
+        #[clap(short, long, default_value_t = 8)]
+        gram_size: usize,
+        #[clap(short, long, default_value_t = 8)]
+        num_threads: usize,
+    },
+
     SelfSimilar {
         #[clap(short, long)]
         data_file: String,
@@ -178,8 +198,6 @@ enum Commands {
         length_threshold: usize,
         #[clap(short, long, default_value_t = 0)]
         frequency_threshold: usize,
-        #[clap(short, long)]
-        only_save_one: bool,
         #[clap(short, long)]
         cache_dir: String,
         #[clap(short, long, default_value_t = 8)]
@@ -371,6 +389,174 @@ fn count_occurances(text: &filebuffer::FileBuffer,
     return low-start;
 }
 
+fn generate_ngrams(s: String, n: u32) -> Vec<String> {
+    // Convert to lowercases
+    // let mut s = s.to_lowercase();
+    
+    // Replace all none alphanumeric characters with spaces
+    // let re = Regex::new(r"[^a-zA-Z0-9\s]").unwrap();
+    // let s = re.replace_all(&s, " ").to_string();
+    
+    // Break sentence in the token, remove empty tokens
+    let tokens = s.split(' ').filter(|token| !token.is_empty());
+
+    // Use the zip function to help us generate n-grams
+    // Concatentate the tokens into ngrams and return
+    let ngrams = tokens.map(|token| token.to_string()).collect::<Vec<String>>();
+    
+    // if no.of ngrams is less than n, return ngrams
+    if ngrams.len() < n as usize {
+        return ngrams;
+    }
+
+    let ngrams = ngrams.windows(n.try_into().unwrap()).map(|ngram| ngram.join(" ")).collect();
+    ngrams
+}
+
+fn cmd_contains(data_file: &String, query_file: &String, ngram_size: usize, num_threads: usize) -> std::io::Result<()>{
+    let now = Instant::now();
+    let mut text_ = Vec::with_capacity(std::fs::metadata(data_file.clone()).unwrap().len() as usize);
+    fs::File::open(data_file.clone()).unwrap().read_to_end(&mut text_)?;
+    let text = &text_;
+
+    let st = table::SuffixTable::new(text);
+    println!("Suffix array construction completed in {}ms",now.elapsed().as_millis());
+    
+    let q_file = File::open(query_file)?;
+    let q_reader = BufReader::new(q_file);
+    let lines = q_reader.lines().map(|l| l.unwrap()).collect::<Vec<String>>();
+
+    // let mut lines = Vec::with_capacity(std::fs::metadata(query_file.clone()).unwrap().len() as usize);
+    // fs::File::open(query_file.clone()).unwrap().read_to_end(&mut lines)?;
+    println!("Done reading the dataset at time t={}ms", now.elapsed().as_millis());
+
+    fn worker(st: &table::SuffixTable, lines: Vec<String>, ngram_size:  usize, worker_index_offset: usize) -> Vec<usize> {
+        // contaminated lines list
+        let mut contaminated_lines: Vec<usize> = Vec::with_capacity(lines.len());
+        // enumerate over the lines
+        for (i, line) in lines.iter().enumerate() {
+            // if line is just \n, skip it
+            if line.len() == 1 && line.as_bytes()[0] == 10 {
+                continue;
+            }
+            // println!("line as bytes {}", line.as_bytes());
+            if st.contains(line.as_bytes()) {
+                println!("Found {}", line);
+                contaminated_lines.push(i+worker_index_offset);
+            }
+        }
+        return contaminated_lines
+    }
+
+    let mut handles = vec![];
+
+    let mut final_contaminated_lines: Vec<usize> = Vec::with_capacity(lines.len());
+
+    let before_contains = Instant::now();
+
+    let _answer = crossbeam::scope(|scope| {
+        let chunk_size = lines.len() / num_threads;
+        for i in 0..num_threads {
+            let st = &st;
+            let start = i * chunk_size;
+            let mut end = (i + 1) * chunk_size;
+            if i == num_threads - 1 {
+                end = lines.len();
+            }
+            let sub_lines = lines[start..end].to_vec();
+            let handle = scope.spawn(move || {
+                worker(st, sub_lines, ngram_size, i*chunk_size)
+            });
+            handles.push(handle);
+        }
+        for handle in handles {
+            let temp_contaminated_lines = handle.join();
+            final_contaminated_lines.extend(temp_contaminated_lines);
+        }
+    });
+    println!("Contains operation on data file took {}ms", before_contains.elapsed().as_millis());
+    
+    println!("{:?}", final_contaminated_lines);
+
+    Ok(())
+}
+
+fn cmd_exact_lookup(data_file: &String, query_file: &String, num_threads: usize) -> std::io::Result<()>{
+    let now = Instant::now();
+
+    let text = filebuffer::FileBuffer::open(data_file).unwrap();
+
+    let metadata = fs::metadata(format!("{}.table.bin", data_file)).expect("suffix array exists for arg 0");
+
+    assert!(metadata.len() % (text.len() as u64) == 0);
+    let ratio = metadata.len()/(text.len() as u64);
+
+    let file = File::open(query_file)?;
+    let reader = BufReader::new(file);
+
+    // for line in reader.lines() {
+    //     println!("{:?}", line);
+    // }
+
+    // let mut text_ = Vec::with_capacity(std::fs::metadata(data_file.clone()).unwrap().len() as usize);
+    // fs::File::open(data_file.clone()).unwrap().read_to_end(&mut text_)?;
+    // let text = &text_;
+    
+    
+    // let q_file = File::open(query_file)?;
+    // let q_reader = BufReader::new(q_file);
+
+    // fn worker(st: &table::SuffixTable, lines: Vec<String>, ngram_size:  usize, worker_index_offset: usize) -> Vec<usize> {
+    //     // contaminated lines list
+    //     let mut contaminated_lines: Vec<usize> = Vec::with_capacity(lines.len());
+    //     // enumerate over the lines
+    //     for (i, line) in lines.iter().enumerate() {
+    //         // if line is just \n, skip it
+    //         if line.len() == 1 && line.as_bytes()[0] == 10 {
+    //             continue;
+    //         }
+    //         println!("looking at line {} {}", i, line);
+    //         if st.contains(line.as_bytes()) {
+    //             contaminated_lines.push(i+worker_index_offset);
+    //         }
+    //     }
+    //     return contaminated_lines
+    // }
+
+    // let mut handles = vec![];
+    // let lines = q_reader.lines().map(|l| l.unwrap()).collect::<Vec<String>>();
+
+    // let mut final_contaminated_lines: Vec<usize> = Vec::with_capacity(lines.len());
+
+    // let before_contains = Instant::now();
+
+    // let _answer = crossbeam::scope(|scope| {
+    //     let chunk_size = lines.len() / num_threads;
+    //     for i in 0..num_threads {
+    //         let st = &st;
+    //         let start = i * chunk_size;
+    //         let mut end = (i + 1) * chunk_size;
+    //         if i == num_threads - 1 {
+    //             end = lines.len();
+    //         }
+    //         let sub_lines = lines[start..end].to_vec();
+    //         let handle = scope.spawn(move || {
+    //             worker(st, sub_lines, ngram_size, i*chunk_size)
+    //         });
+    //         handles.push(handle);
+    //     }
+    //     for handle in handles {
+    //         let temp_contaminated_lines = handle.join();
+    //         final_contaminated_lines.extend(temp_contaminated_lines);
+    //     }
+    // });
+    // println!("Contains operation on data file took {}ms", before_contains.elapsed().as_millis());
+    
+    // println!("{:?}", final_contaminated_lines);
+
+    Ok(())
+}
+
 /* 
  * Create a suffix array for a given file in one go.
  * Calling this method is memory heavy---it's technically linear in the
@@ -483,12 +669,25 @@ fn cmd_count_occurrences(fpath: &String, querypath: &String)   -> std::io::Resul
     assert!(size_table % size_text == 0);
     let size_width = size_table / size_text;
 
-    let mut str = Vec::with_capacity(std::fs::metadata(querypath.clone()).unwrap().len() as usize);
-    fs::File::open(querypath.clone()).unwrap().read_to_end(&mut str)?;
+    // let q_file = File::open(querypath)?;
+    // let q_reader = BufReader::new(q_file);
+    // let lines = q_reader.lines().map(|l| l.unwrap()).collect::<Vec<String>>();
 
-    let occurances = count_occurances(&text, size_text,  &table, size_table, &str[0..str.len()], size_width as usize, false);
+    // for line in lines {
+    //     println!("I like {}.", line);
+    // }
 
-    println!("Number of times present: {}\n", occurances);
+    // let mut str = Vec::with_capacity(std::fs::metadata(querypath.clone()).unwrap().len() as usize);
+    // fs::File::open(querypath.clone()).unwrap().read_to_end(&mut str)?;
+
+    // for line in str:
+    // cmd_count_occurrences
+    //     println!("str {}", line);
+
+
+    // let occurances = count_occurances(&text, size_text,  &table, size_table, &str[0..str.len()], size_width as usize, false);
+
+    // println!("Number of times present: {}\n", occurances);
     Ok(())
 }
 
@@ -534,7 +733,7 @@ fn cmd_memorization_sample(
         println!("Hello, world! {} {} {}", data_file, length_threshold, frequency_threshold, );
         // cmd_make(data_file);
         let result = cmd_self_similar(data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, num_threads);
-        let result_similar = match result {
+        let _result_similar = match result {
             Ok(file) => file,
             Err(error) => panic!("Problem with cmd_self_similar: {:?}", error),
         }; 
@@ -547,12 +746,11 @@ fn cmd_memorization_sample_across(
         data_file_2: &String, 
         length_threshold: &usize, 
         frequency_threshold: &usize,
-        only_save_one: &bool, 
         cache_dir: &String, 
         num_threads: i64)  -> std::io::Result<()> {
             println!("cmd_memorization_sample_across {} {} {}", data_file_1, data_file_2, frequency_threshold);
             let result = cmd_across_similar(data_file_1, data_file_2, cache_dir, *length_threshold, num_threads, *frequency_threshold);
-            let result_similar = match result {
+            let _result_similar = match result {
                 Ok(file) => file,
                 Err(error) => panic!("Problem with cmd_self_similar: {:?}", error),
             }; 
@@ -828,7 +1026,6 @@ fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &St
 
                 // We want the matches to be clustered, so let's find all matches from
                 // the first string that are equal to target_suf
-                let start = i;
                 
                 while suf1.len() >= length_threshold && &suf1[..length_threshold] == target_suf {
                     // outfile1.write_all(&to_bytes(&[location1 as u64][..], size_width_1)[..]).expect("Ok");
@@ -971,7 +1168,7 @@ impl<'a> PartialOrd for MergeState<'a> {
  * Fortunately for us, language model datasets typically don't just repeat the same
  * character a hundred million times in a row. So in practice, it's linear time.
  *
- * There are thre complications here.
+ * There are three complications here.
  * 
  * As with selfsimilar_parallel, we can't fit all A_i into memory at once, and
  * we want to make things fast and so parallelize our execution. So we do the
@@ -1114,8 +1311,12 @@ fn cmd_merge(data_files: &Vec<String>, output_file: &String, num_threads: i64)  
 
     // Make sure we have enough space to take strided offsets for multiple threads
     // This should be an over-approximation, and starts allowing new threads at 1k of data
-    // let num_threads = std::cmp::min(num_threads, std::cmp::max((texts.len() as i64 - 1024)/10, 1));
-    println!("AA {}", num_threads);
+    let af = texts_len.iter().sum::<usize>() as i64;
+    let og = texts.len() as i64;
+    println!("og threads {} proposed {}", og, af);
+
+    // let num_threads = std::cmp::min(num_threads, std::cmp::max((texts.len() as i64 - 1024)/10, 1)); 
+    println!("num_threads {}", num_threads);
 
     // Start a bunch of jobs that each work on non-overlapping regions of the final resulting suffix array
     // Each job is going to look at all of the partial suffix arrays to take the relavent slice.
@@ -1273,7 +1474,7 @@ fn cmd_collect(data_file: &String, cache_dir: &String, length_threshold: u64)  -
 	// ensure this bucket has enough data to push the item
         if index+1 < outputs[which_array].len() {
             heap.push(Reverse((outputs[which_array][index+1], index+1, which_array)));
-	}
+	    }
     } else {
         println!("No duplicates found! Either the dataset is duplicate-free or something went wrong.");
         return Ok(());
@@ -1341,8 +1542,8 @@ fn main()  -> std::io::Result<()> {
             cmd_memorization_sample(data_file, length_threshold, frequency_threshold, only_save_one, cache_dir, *num_threads)?;
         }
 
-        Commands::MemorizationSampleAcross { data_file_1, data_file_2, length_threshold, frequency_threshold, only_save_one, cache_dir, num_threads } => {
-            cmd_memorization_sample_across(data_file_1, data_file_2, length_threshold, frequency_threshold, only_save_one, cache_dir, *num_threads)?;
+        Commands::MemorizationSampleAcross { data_file_1, data_file_2, length_threshold, frequency_threshold, cache_dir, num_threads } => {
+            cmd_memorization_sample_across(data_file_1, data_file_2, length_threshold, frequency_threshold, cache_dir, *num_threads)?;
         }
 
         Commands::AcrossSimilar { data_file_1, data_file_2, cache_dir, length_threshold, num_threads, frequency_threshold } => {
@@ -1352,6 +1553,14 @@ fn main()  -> std::io::Result<()> {
                                *length_threshold,
                                *num_threads,
                                *frequency_threshold)?;
+        }
+
+        Commands::ExactLookup { data_file, query_file, num_threads } => {
+            cmd_exact_lookup(data_file, query_file, *num_threads)?;
+        }
+
+        Commands::Contains { data_file, query_file, gram_size: ngram_size, num_threads } => {
+            cmd_contains(data_file, query_file, *ngram_size, *num_threads)?;
         }
 
         Commands::Merge { suffix_path, output_file, num_threads } => {
