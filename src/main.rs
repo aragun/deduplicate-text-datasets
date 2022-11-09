@@ -55,6 +55,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::cmp::Reverse;
 use std::convert::TryInto;
+use std::str;
 
 extern crate filebuffer;
 extern crate zstd;
@@ -222,7 +223,7 @@ pub fn to_bytes(input: &[u64], size_width: usize) -> Vec<u8> {
 
 /* Convert a uint8 array to a uint64. Only called on (relatively) small files. */
 pub fn from_bytes(input: Vec<u8>, size_width: usize) -> Vec<u64> {
-    println!("S {}", input.len());
+    // println!("S {}", input.len());
     assert!(input.len() % size_width == 0);
     let mut bytes:Vec<u64> = Vec::with_capacity(input.len()/size_width);
 
@@ -942,6 +943,19 @@ fn cmd_self_similar(data_file: &String, length_threshold: &usize, frequency_thre
  * The dups and size file have the same interpretation as before. But this time there are
  * two, one for the A -> B comparison, and another for the B -> A comparison.
  */
+
+// fn traverse_suffix_array(data_file_1: &String) -> std::io::Result<()> {
+//     let text1 = filebuffer::FileBuffer::open(data_file_1).unwrap();
+//     let metadata1 = fs::metadata(format!("{}.table.bin", data_file_1)).expect("suffix array exists for arg 0");
+//     assert!(metadata1.len() % (text1.len() as u64) == 0);
+//     let ratio1 = metadata1.len()/(text1.len() as u64);
+
+//     let mut table1 = make_table(format!("{}.table.bin", data_file_1), start1, size_width_1);
+//     let mut location1 = get_next_pointer_from_table(&mut table1);
+
+//     Ok(())
+// }
+ 
 fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &String,
                       length_threshold: usize, num_threads: i64, frequency_threshold: usize)  -> std::io::Result<()> {
     let text1 = filebuffer::FileBuffer::open(data_file_1).unwrap();
@@ -1018,18 +1032,21 @@ fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &St
             
             let does_match = suf1.len() >= length_threshold && suf2.len() >= length_threshold && suf1[..length_threshold] == suf2[..length_threshold];
             
+            // println!("looking at \nsuf1 {:?} \nsuf2 {:?}", str::from_utf8(&suf1[..length_threshold]), str::from_utf8(&suf2[..length_threshold]));
+
             if does_match {
-                let mut pairs:Vec<u64> = Vec::new();
 
                 // We have a match between a subsequence in text1 and text2
                 let target_suf = &suf1[..length_threshold]; // wlog. equals suf2[..length_threshold]
 
                 // We want the matches to be clustered, so let's find all matches from
                 // the first string that are equal to target_suf
+                let mut pairs:Vec<u64> = Vec::new();
                 
                 while suf1.len() >= length_threshold && &suf1[..length_threshold] == target_suf {
                     // outfile1.write_all(&to_bytes(&[location1 as u64][..], size_width_1)[..]).expect("Ok");
                     pairs.push(location1);
+                    // println!("another match {:?}", str::from_utf8(&suf1[..length_threshold]));
 
                     location1 = get_next_pointer_from_table_canfail(&mut table1);
                     i += 1;
@@ -1040,7 +1057,8 @@ fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &St
                 }
 
                 if pairs.len() == frequency_threshold {
-                    println!("Found one sample for frequency {}!", frequency_threshold);
+                    println!("Found one sample for frequency {}! {:?}", frequency_threshold, str::from_utf8(&target_suf));
+                    // println!("Breaking at sample {:?}", str::from_utf8(&suf1[..length_threshold]));
                     outfile1.write_all(&to_bytes(&pairs[..], size_width_1)[..]).expect("Ok");
                     outfile1_sizes.write_all(&to_bytes(&[pairs.len() as u64][..], size_width_1)[..]).expect("Ok");
                     duplicate_count += pairs.len();
@@ -1055,7 +1073,8 @@ fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &St
                 while suf2.len() >= length_threshold && &suf2[..length_threshold] == target_suf {
                     outfile2.write_all(&to_bytes(&[location2 as u64][..], size_width_2)[..]).expect("Ok");
                     
-                    location2 = get_next_pointer_from_table(&mut table2);
+                    // location2 = get_next_pointer_from_table(&mut table2);
+                    location2 = get_next_pointer_from_table_canfail(&mut table2);
                     j += 1;
                     if location2 == std::u64::MAX {
                         break;
@@ -1107,7 +1126,8 @@ fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &St
             let this_end = off_disk_position(text2, &mut table2, end_seq, ratio2 as usize);
             
             last_end = this_end;
-            println!("start {} {}", this_start, this_end);
+            println!("start text1 {} {}", a, b);
+            println!("start text2 {} {}", this_start, this_end);
             let one_result = scope.spawn(move || {
                 
                 return worker(text1, text2,
@@ -1315,7 +1335,7 @@ fn cmd_merge(data_files: &Vec<String>, output_file: &String, num_threads: i64)  
     let og = texts.len() as i64;
     println!("og threads {} proposed {}", og, af);
 
-    // let num_threads = std::cmp::min(num_threads, std::cmp::max((texts.len() as i64 - 1024)/10, 1)); 
+    let num_threads = std::cmp::min(num_threads, std::cmp::max((texts.len() as i64 - 1024)/10, 1)); 
     println!("num_threads {}", num_threads);
 
     // Start a bunch of jobs that each work on non-overlapping regions of the final resulting suffix array

@@ -84,8 +84,10 @@ print("Merging suffix trees")
 os.popen("rm tmp/out.table.bin.*").read()
 
 torun = " --suffix-path ".join(files)
-print("./target/debug/dedup_dataset merge --output-file %s --suffix-path %s --num-threads %d"%("tmp/out.table.bin", torun, mp.cpu_count()))
-pipe = os.popen("./target/debug/dedup_dataset merge --output-file %s --suffix-path %s --num-threads %d"%("tmp/out.table.bin", torun, mp.cpu_count()))
+cmd = f"./target/debug/dedup_dataset merge --output-file tmp/out.table.bin --suffix-path {torun} --num-threads {os.cpu_count() or 1}"
+print(cmd) #mp.cpu_count()
+pipe = os.popen(cmd)
+# pipe = os.popen("./target/debug/dedup_dataset merge --output-file %s --suffix-path %s --num-threads %d"%("tmp/out.table.bin", torun, mp.cpu_count()))
 output = pipe.read()
 print(output)
 if pipe.close() is not None:

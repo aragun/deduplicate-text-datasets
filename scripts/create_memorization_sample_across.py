@@ -1,3 +1,23 @@
+"""
+Usage:
+python3 scripts/create_memorization_sample_across.py --train_files s3://mstar-bedrock-dev/staging/package-10-04-22-v2/train1/ \
+    --val_files s3://xuerui-dev/pile-c4-book-hq-2/ --length_threshold 100 --cache_dir /tmp/memorization_cache \
+    --frequency_threshold 5 --batch_array_index 0 --batch_array_size 500
+
+For test:
+python3 scripts/create_memorization_sample_across.py --train_files s3://anuragik-dev/across_similar_test/train/ \
+    --val_files s3://anuragik-dev/across_similar_test/val/ --length_threshold 100 --cache_dir /tmp/memorization_cache \
+    --frequency_threshold 5 --batch_array_index 0 --is_test
+
+python3 scripts/create_memorization_sample_across.py --train_files s3://anuragik-dev/across_similar_test_2gram/train/ \
+    --val_files s3://anuragik-dev/across_similar_test_2gram/val/ --length_threshold 10 --cache_dir /tmp/memorization_cache \
+    --frequency_threshold 5 --batch_array_index 0 --is_test
+
+python3 scripts/create_memorization_sample_across.py --train_files s3://anuragik-dev/across_similar_test_simple/train/ \
+    --val_files s3://anuragik-dev/across_similar_test_simple/val/ --length_threshold 100 --cache_dir /tmp/memorization_cache \
+    --frequency_threshold 5 --batch_array_index 0 --is_test
+"""
+
 import argparse
 import json
 import mmap
@@ -17,8 +37,8 @@ unique_id = os.environ.get('AWS_BATCH_JOB_ID', str(uuid.uuid4())).split(':')[0]
 import s3_accessor
 from tqdm import tqdm
 
-data_dir = '/tmp/data'
-temp_folder = '/tmp/memorization'
+data_dir = './tmp/data'
+temp_folder = './tmp/memorization'
 content_column = "text"
 filter_columns = ["identity_attack", "insult","obscene","severe_toxicity","sexual_explicit","threat","toxicity"]
 filter_threshold = 0.5
@@ -59,7 +79,7 @@ def write_line(line, fout):
     fout.write(next_line)
 
 # TODO: maybe think of a way to do this parallelly
-def extract_lines_from_jsonl_files(files, output_file, include_newline=True):
+def extract_lines_from_jsonl_files(files, output_file):
     line_count = 0
     with open(output_file, 'wb') as of:
         for file in tqdm(files):
@@ -71,6 +91,7 @@ def extract_lines_from_jsonl_files(files, output_file, include_newline=True):
                             break
                         json_line = json.loads(line)
                         if not any(column in json_line and float(json_line[column]) >= filter_threshold for column in filter_columns):
+                            json_line[content_column].replace('\n', ' ').replace('\r', ' ')
                             write_line(json_line[content_column], of)
 
 def recreate_dir(dir):
@@ -107,6 +128,9 @@ def save_mem_sample_json(byterange, filename, output_fname):
             if sample is not None:
                 samples[sample] += 1
             
+    if os.path.isfile(output_fname):
+        print(f'{output_fname} already exists, removing it ...')
+        os.remove(output_fname)
     
     print(f'total samples {len(list(samples))}, writing to {output_fname}')
     keys = random.sample(list(samples), min(len(list(samples)), 200))
@@ -122,16 +146,10 @@ def save_mem_sample_json(byterange, filename, output_fname):
 
 def main(train_files_path, val_files_path, args):
     train_files = get_files(train_files_path)
-    print(f'train_files {train_files}')
+    modified_train_file = os.path.join(temp_folder, 'train.txt')
+    extract_lines_from_jsonl_files(train_files, modified_train_file)
 
     val_files = get_files(val_files_path)
-    
-    #TODO TEST HACK - only look at 10 val files
-    val_files = val_files[:100]
-
-    modified_train_file = os.path.join(temp_folder, 'train.txt')
-    extract_lines_from_jsonl_files(train_files, modified_train_file, include_newline=False)
-
     modified_val_file = os.path.join(temp_folder, 'val.txt')
     extract_lines_from_jsonl_files(val_files, modified_val_file)
 
@@ -153,7 +171,7 @@ def main(train_files_path, val_files_path, args):
 
     for f in range(1, args.frequency_threshold+1):
         recreate_dir(args.cache_dir)
-        rust_result = os.popen(f"cargo run memorization-sample-across --data-file-1 {modified_train_file} --data-file-2 {modified_val_file} --length-threshold {args.length_threshold} --cache-dir {args.cache_dir} --num-threads {os.cpu_count() or 1} --frequency-threshold {f}").read()
+        rust_result = os.popen(f"cargo run memorization-sample-across --data-file-1 {modified_train_file} --data-file-2 {modified_val_file} --length-threshold {args.length_threshold} --cache-dir {args.cache_dir} --num-threads {1} --frequency-threshold {f}").read()
         print(f'rust_result for memorization_sample {rust_result}')
 
         save_mem_sample_json(f'{args.cache_dir}/mem_sample_ranges_train.txt', modified_train_file, f'mem_sample_f_{f}.csv')
