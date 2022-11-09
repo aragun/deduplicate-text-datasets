@@ -1335,7 +1335,7 @@ fn cmd_merge(data_files: &Vec<String>, output_file: &String, num_threads: i64)  
     let og = texts.len() as i64;
     println!("og threads {} proposed {}", og, af);
 
-    let num_threads = std::cmp::min(num_threads, std::cmp::max((texts.len() as i64 - 1024)/10, 1)); 
+    // let num_threads = std::cmp::min(num_threads, std::cmp::max((texts.len() as i64 - 1024)/10, 1)); 
     println!("num_threads {}", num_threads);
 
     // Start a bunch of jobs that each work on non-overlapping regions of the final resulting suffix array
