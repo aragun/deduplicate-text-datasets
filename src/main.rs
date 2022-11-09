@@ -107,15 +107,6 @@ enum Commands {
         query_file: String,
     },
 
-    ExactLookup {
-        #[clap(short, long)]
-        data_file: String,
-        #[clap(short, long)]
-        query_file: String,
-        #[clap(short, long, default_value_t = 8)]
-        num_threads: usize,
-    },
-
     Contains {
         #[clap(short, long)]
         data_file: String,
@@ -390,31 +381,7 @@ fn count_occurances(text: &filebuffer::FileBuffer,
     return low-start;
 }
 
-fn generate_ngrams(s: String, n: u32) -> Vec<String> {
-    // Convert to lowercases
-    // let mut s = s.to_lowercase();
-    
-    // Replace all none alphanumeric characters with spaces
-    // let re = Regex::new(r"[^a-zA-Z0-9\s]").unwrap();
-    // let s = re.replace_all(&s, " ").to_string();
-    
-    // Break sentence in the token, remove empty tokens
-    let tokens = s.split(' ').filter(|token| !token.is_empty());
-
-    // Use the zip function to help us generate n-grams
-    // Concatentate the tokens into ngrams and return
-    let ngrams = tokens.map(|token| token.to_string()).collect::<Vec<String>>();
-    
-    // if no.of ngrams is less than n, return ngrams
-    if ngrams.len() < n as usize {
-        return ngrams;
-    }
-
-    let ngrams = ngrams.windows(n.try_into().unwrap()).map(|ngram| ngram.join(" ")).collect();
-    ngrams
-}
-
-fn cmd_contains(data_file: &String, query_file: &String, ngram_size: usize, num_threads: usize) -> std::io::Result<()>{
+fn cmd_contains(data_file: &String, query_file: &String, _ngram_size: usize, num_threads: usize) -> std::io::Result<()>{
     let now = Instant::now();
     let mut text_ = Vec::with_capacity(std::fs::metadata(data_file.clone()).unwrap().len() as usize);
     fs::File::open(data_file.clone()).unwrap().read_to_end(&mut text_)?;
@@ -431,7 +398,7 @@ fn cmd_contains(data_file: &String, query_file: &String, ngram_size: usize, num_
     // fs::File::open(query_file.clone()).unwrap().read_to_end(&mut lines)?;
     println!("Done reading the dataset at time t={}ms", now.elapsed().as_millis());
 
-    fn worker(st: &table::SuffixTable, lines: Vec<String>, ngram_size:  usize, worker_index_offset: usize) -> Vec<usize> {
+    fn worker(st: &table::SuffixTable, lines: Vec<String>, worker_index_offset: usize) -> Vec<usize> {
         // contaminated lines list
         let mut contaminated_lines: Vec<usize> = Vec::with_capacity(lines.len());
         // enumerate over the lines
@@ -466,7 +433,7 @@ fn cmd_contains(data_file: &String, query_file: &String, ngram_size: usize, num_
             }
             let sub_lines = lines[start..end].to_vec();
             let handle = scope.spawn(move || {
-                worker(st, sub_lines, ngram_size, i*chunk_size)
+                worker(st, sub_lines, i*chunk_size)
             });
             handles.push(handle);
         }
@@ -478,82 +445,6 @@ fn cmd_contains(data_file: &String, query_file: &String, ngram_size: usize, num_
     println!("Contains operation on data file took {}ms", before_contains.elapsed().as_millis());
     
     println!("{:?}", final_contaminated_lines);
-
-    Ok(())
-}
-
-fn cmd_exact_lookup(data_file: &String, query_file: &String, num_threads: usize) -> std::io::Result<()>{
-    let now = Instant::now();
-
-    let text = filebuffer::FileBuffer::open(data_file).unwrap();
-
-    let metadata = fs::metadata(format!("{}.table.bin", data_file)).expect("suffix array exists for arg 0");
-
-    assert!(metadata.len() % (text.len() as u64) == 0);
-    let ratio = metadata.len()/(text.len() as u64);
-
-    let file = File::open(query_file)?;
-    let reader = BufReader::new(file);
-
-    // for line in reader.lines() {
-    //     println!("{:?}", line);
-    // }
-
-    // let mut text_ = Vec::with_capacity(std::fs::metadata(data_file.clone()).unwrap().len() as usize);
-    // fs::File::open(data_file.clone()).unwrap().read_to_end(&mut text_)?;
-    // let text = &text_;
-    
-    
-    // let q_file = File::open(query_file)?;
-    // let q_reader = BufReader::new(q_file);
-
-    // fn worker(st: &table::SuffixTable, lines: Vec<String>, ngram_size:  usize, worker_index_offset: usize) -> Vec<usize> {
-    //     // contaminated lines list
-    //     let mut contaminated_lines: Vec<usize> = Vec::with_capacity(lines.len());
-    //     // enumerate over the lines
-    //     for (i, line) in lines.iter().enumerate() {
-    //         // if line is just \n, skip it
-    //         if line.len() == 1 && line.as_bytes()[0] == 10 {
-    //             continue;
-    //         }
-    //         println!("looking at line {} {}", i, line);
-    //         if st.contains(line.as_bytes()) {
-    //             contaminated_lines.push(i+worker_index_offset);
-    //         }
-    //     }
-    //     return contaminated_lines
-    // }
-
-    // let mut handles = vec![];
-    // let lines = q_reader.lines().map(|l| l.unwrap()).collect::<Vec<String>>();
-
-    // let mut final_contaminated_lines: Vec<usize> = Vec::with_capacity(lines.len());
-
-    // let before_contains = Instant::now();
-
-    // let _answer = crossbeam::scope(|scope| {
-    //     let chunk_size = lines.len() / num_threads;
-    //     for i in 0..num_threads {
-    //         let st = &st;
-    //         let start = i * chunk_size;
-    //         let mut end = (i + 1) * chunk_size;
-    //         if i == num_threads - 1 {
-    //             end = lines.len();
-    //         }
-    //         let sub_lines = lines[start..end].to_vec();
-    //         let handle = scope.spawn(move || {
-    //             worker(st, sub_lines, ngram_size, i*chunk_size)
-    //         });
-    //         handles.push(handle);
-    //     }
-    //     for handle in handles {
-    //         let temp_contaminated_lines = handle.join();
-    //         final_contaminated_lines.extend(temp_contaminated_lines);
-    //     }
-    // });
-    // println!("Contains operation on data file took {}ms", before_contains.elapsed().as_millis());
-    
-    // println!("{:?}", final_contaminated_lines);
 
     Ok(())
 }
@@ -655,7 +546,7 @@ fn cmd_make_part(fpath: &String, start: u64, end: u64)   -> std::io::Result<()> 
  * not 2. This is different from python's "aaaa".count("aa") which will say 2.
  * This may or may not be a problem for you. But if is is, that's you're problem, not mine.
  */
-fn cmd_count_occurrences(fpath: &String, querypath: &String)   -> std::io::Result<()> {
+ fn cmd_count_occurrences(fpath: &String, querypath: &String)   -> std::io::Result<()> {
     /* Count the numberof times a particular sequence occurs in the table.
      */
 
@@ -670,25 +561,12 @@ fn cmd_count_occurrences(fpath: &String, querypath: &String)   -> std::io::Resul
     assert!(size_table % size_text == 0);
     let size_width = size_table / size_text;
 
-    // let q_file = File::open(querypath)?;
-    // let q_reader = BufReader::new(q_file);
-    // let lines = q_reader.lines().map(|l| l.unwrap()).collect::<Vec<String>>();
+    let mut str = Vec::with_capacity(std::fs::metadata(querypath.clone()).unwrap().len() as usize);
+    fs::File::open(querypath.clone()).unwrap().read_to_end(&mut str)?;
 
-    // for line in lines {
-    //     println!("I like {}.", line);
-    // }
+    let occurances = count_occurances(&text, size_text,  &table, size_table, &str[0..str.len()], size_width as usize, false);
 
-    // let mut str = Vec::with_capacity(std::fs::metadata(querypath.clone()).unwrap().len() as usize);
-    // fs::File::open(querypath.clone()).unwrap().read_to_end(&mut str)?;
-
-    // for line in str:
-    // cmd_count_occurrences
-    //     println!("str {}", line);
-
-
-    // let occurances = count_occurances(&text, size_text,  &table, size_table, &str[0..str.len()], size_width as usize, false);
-
-    // println!("Number of times present: {}\n", occurances);
+    println!("Number of times present: {}\n", occurances);
     Ok(())
 }
 
@@ -738,7 +616,11 @@ fn cmd_memorization_sample(
             Ok(file) => file,
             Err(error) => panic!("Problem with cmd_self_similar: {:?}", error),
         }; 
-        cmd_collect(data_file, cache_dir, (*length_threshold).try_into().unwrap());
+        let result = cmd_collect(data_file, cache_dir, (*length_threshold).try_into().unwrap());
+        let _result_collect = match result {
+            Ok(file) => file,
+            Err(error) => panic!("Problem with cmd_collect: {:?}", error),
+        };
         Ok(())
     }
 
@@ -755,7 +637,11 @@ fn cmd_memorization_sample_across(
                 Ok(file) => file,
                 Err(error) => panic!("Problem with cmd_self_similar: {:?}", error),
             }; 
-            cmd_collect(data_file_1, cache_dir, (*length_threshold).try_into().unwrap());
+            let result = cmd_collect(data_file_1, cache_dir, (*length_threshold).try_into().unwrap());
+            let _result_collect = match result {
+                Ok(file) => file,
+                Err(error) => panic!("Problem with cmd_collect: {:?}", error),
+            };
             Ok(())
         }
 
@@ -1057,7 +943,7 @@ fn cmd_across_similar(data_file_1: &String, data_file_2: &String, cache_dir: &St
                 }
 
                 if pairs.len() == frequency_threshold {
-                    println!("Found one sample for frequency {}! {:?}", frequency_threshold, str::from_utf8(&target_suf));
+                    // println!("Found one sample for frequency {}! {:?}", frequency_threshold, str::from_utf8(&target_suf));
                     // println!("Breaking at sample {:?}", str::from_utf8(&suf1[..length_threshold]));
                     outfile1.write_all(&to_bytes(&pairs[..], size_width_1)[..]).expect("Ok");
                     outfile1_sizes.write_all(&to_bytes(&[pairs.len() as u64][..], size_width_1)[..]).expect("Ok");
@@ -1573,10 +1459,6 @@ fn main()  -> std::io::Result<()> {
                                *length_threshold,
                                *num_threads,
                                *frequency_threshold)?;
-        }
-
-        Commands::ExactLookup { data_file, query_file, num_threads } => {
-            cmd_exact_lookup(data_file, query_file, *num_threads)?;
         }
 
         Commands::Contains { data_file, query_file, gram_size: ngram_size, num_threads } => {

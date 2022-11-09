@@ -19,6 +19,7 @@ import multiprocessing as mp
 import numpy as np
 
 data_size = os.path.getsize(sys.argv[1])
+num_threads = int(sys.argv[2])
 
 HACK = 100000
 
@@ -84,7 +85,7 @@ print("Merging suffix trees")
 os.popen("rm tmp/out.table.bin.*").read()
 
 torun = " --suffix-path ".join(files)
-cmd = f"./target/debug/dedup_dataset merge --output-file tmp/out.table.bin --suffix-path {torun} --num-threads {os.cpu_count() or 1}"
+cmd = f"./target/debug/dedup_dataset merge --output-file tmp/out.table.bin --suffix-path {torun} --num-threads {num_threads}"
 print(cmd) #mp.cpu_count()
 pipe = os.popen(cmd)
 # pipe = os.popen("./target/debug/dedup_dataset merge --output-file %s --suffix-path %s --num-threads %d"%("tmp/out.table.bin", torun, mp.cpu_count()))

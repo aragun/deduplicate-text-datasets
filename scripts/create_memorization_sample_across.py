@@ -37,8 +37,8 @@ unique_id = os.environ.get('AWS_BATCH_JOB_ID', str(uuid.uuid4())).split(':')[0]
 import s3_accessor
 from tqdm import tqdm
 
-data_dir = './tmp/data'
-temp_folder = './tmp/memorization'
+data_dir = '/tmp/data'
+temp_folder = '/tmp/memorization'
 content_column = "text"
 filter_columns = ["identity_attack", "insult","obscene","severe_toxicity","sexual_explicit","threat","toxicity"]
 filter_threshold = 0.5
@@ -153,21 +153,24 @@ def main(train_files_path, val_files_path, args):
     modified_val_file = os.path.join(temp_folder, 'val.txt')
     extract_lines_from_jsonl_files(val_files, modified_val_file)
 
-    print(f'building suffix array for {modified_train_file} ...')
+    num_threads = str(1 if args.is_test else os.cpu_count() or 1)
+    print(f'building suffix array for train file {modified_train_file} ...')
     start = time.time()
-    cmd = ['python3', './scripts/make_suffix_array.py', modified_train_file]
+    cmd = ['python3', './scripts/make_suffix_array.py', modified_train_file, num_threads]
     rust_result = subprocess.Popen(cmd).wait()
     print(rust_result)
     print(f'suffix array built in {time.time() - start} seconds')
-    # TODO: also output size of the suffix array
+    assert os.path.isfile(os.path.join(temp_folder, 'train.txt.table.bin')), f'suffix array train.txt.table.bin not found!'
+    print(f'size of suffix array for train.txt {os.path.getsize(os.path.join(temp_folder, "train.txt.table.bin"))} bytes')    
 
-    print(f'building suffix array for {modified_val_file} ...')
+    print(f'building suffix array for val file {modified_val_file} ...')
     start = time.time()
-    cmd = ['python3', './scripts/make_suffix_array.py', modified_val_file]
+    cmd = ['python3', './scripts/make_suffix_array.py', modified_val_file, num_threads]
     rust_result = subprocess.Popen(cmd).wait()
     print(rust_result)
     print(f'suffix array built in {time.time() - start} seconds')
-    # TODO: also output size of the suffix array
+    assert os.path.isfile(os.path.join(temp_folder, 'val.txt.table.bin')), f'suffix array val.txt.table.bin not found!'
+    print(f'size of suffix array for val.txt {os.path.getsize(os.path.join(temp_folder, "val.txt.table.bin"))} bytes')
 
     for f in range(1, args.frequency_threshold+1):
         recreate_dir(args.cache_dir)

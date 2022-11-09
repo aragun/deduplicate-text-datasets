@@ -1,4 +1,4 @@
-FROM amazonlinux
+FROM amazonlinux:latest
 
 RUN amazon-linux-extras install python3
 RUN yum -y install gcc-c++
@@ -11,11 +11,11 @@ ADD scripts /opt/source_code/scripts
 ADD src /opt/source_code/src
 ADD Cargo.toml /opt/source_code/Cargo.toml
 ADD tmp/.keep /opt/source_code/tmp/.keep
-ADD entrypoint_pii.sh /opt/source_code/entrypoint_pii.sh
+ADD entrypoint_across.sh /opt/source_code/entrypoint_across.sh
 
 WORKDIR /opt/source_code
 
 RUN cargo build
-RUN chmod 777 entrypoint_pii.sh
+RUN chmod 777 entrypoint_across.sh
 
-ENTRYPOINT ["/opt/source_code/entrypoint_pii.sh"]
+ENTRYPOINT ["/opt/source_code/entrypoint_across.sh"]
